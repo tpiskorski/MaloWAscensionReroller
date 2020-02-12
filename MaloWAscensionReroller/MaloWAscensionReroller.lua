@@ -1,6 +1,10 @@
 local MY_NAME = "MaloWAscensionReroller"
 local MY_ABBREVIATION = "MAR"
 
+SCORING_MODE = "Scoring"
+PICKING_MODE= "Picking"
+MODE = SCORING_MODE
+
 function MaloWUtils_SplitStringOnSpace(s)
 	t = {}
 	index = 1
@@ -92,12 +96,16 @@ SlashCmdList[MY_ABBREVIATION .. "COMMAND"] = function(msg)
 		mar_printSeenSpells()
 	elseif command == "addmusthave" then
 		table.insert(mar_mustHaveSpells, tonumber(arguments[2]))
+		mar_print("Added must have spell")
 	elseif command == "addstrong" then
 		table.insert(mar_strongSpells, tonumber(arguments[2]))
 	elseif command == "adddecent" then
 		table.insert(mar_decentSpells, tonumber(arguments[2]))
 	elseif command == "addweak" then
 		table.insert(mar_weakSpells, tonumber(arguments[2]))
+	elseif command == "picking" then
+		MODE = PICKING_MODE
+		mar_print("Set picking mode!")
 	else
 		mar_print("Unrecognized command: " .. command)
 	end
@@ -137,6 +145,7 @@ function mar_reset()
 	mar_decentScore = 2
 	mar_weakScore = 1
 	mar_pickedSpells = {}
+	mar_picking_found = 0
 end
 
 
@@ -161,14 +170,27 @@ mar_finished = false
 mar_pickRandomly = false
 mar_shouldReroll = false
 
+mar_picking_found = 0
+
 mar_seenSpells = {}
 mar_seenSpells[1] = {}
 mar_seenSpells[2] = {}
 mar_seenSpells[3] = {}
 mar_seenSpells[4] = {}
 
--- OnUpdate
+
+
 function mar_onUpdate()
+	if MODE == SCORING_MODE then
+		scoring_mode()
+	elseif MODE == PICKING_MODE then
+		picking_mode()
+	else
+		mar_print("Unrecognized mode: " .. MODE)
+end
+
+-- OnUpdate
+function scoring_mode()
 	if not mar_isEnabled then
 		return 
 	end
@@ -341,6 +363,121 @@ function mar_onUpdate()
 	Card1LearnSpellButton:Click()
 end
 
+function picking_mode()
+	if not mar_isEnabled then
+		return 
+	end
+	if mar_lastChoiceTime + mar_delay > GetTime() then
+		return
+	end
+	mar_lastChoiceTime = GetTime()
+	
+	if mar_shouldReroll then
+		mar_reroll()
+		return
+	end
+	
+	if mar_finished then -- After finishing do 1 iteration of trying to take the spells again to prevent leaving the last roll un-picked.
+		mar_isEnabled = false
+		mar_finished = false
+		local availableSpells = mar_getCardSpells()
+		if MaloWUtils_TableLength(availableSpells) ~= 0 then
+			for cardId, rolledSpell in pairs(availableSpells) do 
+				for pickedSpell, _ in pairs(mar_pickedSpells) do 
+					if pickedSpell == rolledSpell then
+						_G["Card" .. tostring(cardId) .. "LearnSpellButton"]:Click()
+						return
+					end
+				end
+			end
+		end
+		return
+	end
+	
+	if MaloWUtils_TableLength(mar_pickedSpells) > 3 then
+		local picking_found = 0
+		for _, mustHaveSpell in pairs(mar_mustHaveSpells) do 
+			for pickedSpell, _ in pairs(mar_pickedSpells) do 
+				if pickedSpell == mustHaveSpell then
+					picking_found = picking_found + 1 
+				end
+			end
+
+		end
+
+		if picking_found ~=  MaloWUtils_TableLength(mustHaveSpell) then
+			mar_print("Not every required spell was found. Rerolling...")
+			mar_reroll()
+			return
+		else
+			mar_print("Finished! All must-have spells were found. Finishing!")
+			mar_reset()
+			mar_finished = true
+			return
+		end
+	end
+	
+	if not Card1:IsVisible() then
+		if mar_firstFailedCardTime == 0 then
+			mar_firstFailedCardTime = GetTime()
+		else
+			if mar_firstFailedCardTime + mar_cardShowTimeout < GetTime() then
+				mar_firstFailedCardTime = 0
+				mar_print("Timed out with cards not being visible, pickedSpell's size: " .. tostring(MaloWUtils_TableLength(mar_pickedSpells)))
+				mar_reroll()
+				return
+			end
+		end
+		return
+	end
+	mar_firstFailedCardTime = 0
+	
+	local availableSpells = mar_getCardSpells()
+	if MaloWUtils_TableLength(availableSpells) == 0 then
+		return
+	end
+	
+	for cardId, rolledSpell in pairs(availableSpells) do 
+		for pickedSpell, _ in pairs(mar_pickedSpells) do 
+			if pickedSpell == rolledSpell then
+				_G["Card" .. tostring(cardId) .. "LearnSpellButton"]:Click()
+				return
+			end
+		end
+	end
+	
+	mar_recordStatistics(availableSpells)
+	
+	if mar_pickRandomly then
+		local index = math.random(3)
+		mar_print("Random-pick mode is enabled, picking #" .. tostring(index))
+		mar_pickSpell(availableSpells[index])
+		_G["Card" .. tostring(index) .. "LearnSpellButton"]:Click()
+		return
+	end
+	
+	for cardId, rolledSpell in pairs(availableSpells) do 
+		for _, mustHaveSpell in pairs(mar_mustHaveSpells) do 
+			if rolledSpell == mustHaveSpell then
+				if mar_pickedSpells[rolledSpell] ~= nil then
+					return
+				end
+				mar_print("Found must-have, Picking " .. tostring(rolledSpell))
+				mar_pickSpell(rolledSpell)
+				_G["Card" .. tostring(cardId) .. "LearnSpellButton"]:Click()
+				return
+			end
+		end
+	end
+	
+	if mar_pickedSpells[availableSpells[1]] ~= nil then
+		return
+	end
+	mar_print("Everything was shit, picking left-most: " .. tostring(availableSpells[1]))
+	mar_pickSpell(availableSpells[1])
+	Card1LearnSpellButton:Click()
+end
+
 function mar_pickSpell(spellId)
 	mar_pickedSpells[spellId] = true
 	if spellId == 965200 then -- Add two fake-spells to make Tame Beast take up 3 slots
@@ -382,6 +519,7 @@ function mar_reroll()
 		Card3:Hide()
 		StaticPopup1Button1:Click()
 		mar_pickedSpells = {}
+		mar_picking_found = 0
 		mar_shouldReroll = false
 	else
 		mar_shouldReroll = true
