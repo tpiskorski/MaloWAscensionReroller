@@ -2,6 +2,9 @@
 An addon that lets you find the perfect starting-abilities on Ascension's Draft realms
 
 # Instructions for how to use
+
+0. For complete automation you need to install AutoHotkey. Windows only. You can find script under autohotkey directory. 
+
 1. Make a macro where you define the spell-ids of your must-have spells, your strong spells, your decent spells, and your weak spells like:  
 /mar addmusthave 71  
 /mar addmusthave 355  
